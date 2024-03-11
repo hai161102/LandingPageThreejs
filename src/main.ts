@@ -1,18 +1,34 @@
 import * as THREE from 'three';
 import * as TWEEN from '@tweenjs/tween.js'
 import Perlin from './utils/noise/Perlin';
-import { GLTFLoader, GLTF, OrbitControls } from 'three/examples/jsm/Addons.js';
+import { GLTFLoader, GLTF, OrbitControls, FBXLoader } from 'three/examples/jsm/Addons.js';
+import { instance, texture } from 'three/examples/jsm/nodes/Nodes.js';
+
+const fbxLoader = new FBXLoader();
+const textureLoader = new THREE.TextureLoader();
+const gltfLoader: GLTFLoader = new GLTFLoader();
 
 const lightMode = document.getElementById('light-mode');
 const iconLightMode: HTMLImageElement = document.getElementById('icon-light-mode') as HTMLImageElement;
 
+const iconLight = {
+  normal: {
+    dark: 'assets/textures/dark.svg',
+    light: 'assets/textures/light.svg'
+  },
+  hover: {
+    dark: 'assets/textures/dark-white.svg',
+    light: 'assets/textures/light-white.svg'
+  }
+}
+
+
+
 const threejsElement = document.getElementById('threejs-scene');
 let deltaTime = 0;
-const maxDistanceCamera = 8;
-const minDistanceCamera = 4;
+const maxDistanceCamera = 10;
+const minDistanceCamera = 8;
 
-const textureLoader = new THREE.TextureLoader();
-const gltfLoader: GLTFLoader = new GLTFLoader();
 
 const tilePaths = [
   'assets/models/tilehex_earth.glb',
@@ -28,58 +44,361 @@ const minRotateX = -0.01;
 
 const lightColor = {
   direction: {
-    light: new THREE.Color(1, 1, 1),
-    dark: new THREE.Color(0.2, 0.2, 0.2),
+    light: new THREE.Color(0xFFFFFF),
+    dark: new THREE.Color(0.05, 0.05, 0.05),
   },
   ambient: {
-    light: new THREE.Color(1, 1, 1),
-    dark: new THREE.Color(0.0, 0.0, 0.1),
+    light: new THREE.Color(0x404040),
+    dark: new THREE.Color(0.0, 0.0, 0.01),
   },
   hemi: {
-    light: new THREE.Color(1, 1, 1),
-    dark: new THREE.Color(0.0, 0.0, 0.1),
+    light: new THREE.Color(0x404040),
+    dark: new THREE.Color(0.0, 0.0, 0.01),
   },
   scene: {
-    light: new THREE.Color(0, 0.8, 1),
-    dark: new THREE.Color(0.0, 0.0, 0.1),
+    light: new THREE.Color(0, 0.6, 0.9),
+    dark: new THREE.Color(0.0, 0.0, 0.0),
   }
-}
-
-const loadModels = (path: string[], onDone: (objects: THREE.Object3D[]) => void) => {
-  const list: THREE.Object3D[] = []
-  const loadFunction = (count: number, onDoneLoad: () => void) => {
-    if (count >= path.length) {
-      onDoneLoad()
-      return
-    }
-    gltfLoader.load(path[count], (gltf: GLTF) => {
-      gltf.scene.traverse(child => {
-        if (child instanceof THREE.Mesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
-          child.material.roughness = 1;
-        }
-      })
-      list.push(gltf.scene)
-      loadFunction(count + 1, onDoneLoad)
-    }, undefined, (err) => {
-      console.error(err);
-      loadFunction(count + 1, onDoneLoad)
-    })
-  }
-
-  loadFunction(0, () => {
-    onDone(list)
-  })
 }
 
 let listMapModels: THREE.Object3D[] = [];
 
+const initView = (view: {
+  view: HTMLElement,
+  width: number,
+  height: number,
+  onResize: (
+    camera: THREE.PerspectiveCamera,
+    renderer: THREE.WebGLRenderer
+  ) => void
+}) => {
 
-const generate = (parent: THREE.Object3D, model: THREE.Object3D | THREE.Object3D[]): {
+  let currentLightMode: 'light' | 'dark' = 'light';
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(view.width, view.height);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.toneMapping = THREE.CineonToneMapping;
+  renderer.toneMappingExposure = 1.6;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  THREE.ColorManagement.enabled = true;
+
+  const scene = new THREE.Scene();
+  scene.background = lightColor.scene.light;
+  scene.castShadow = true;
+  const camera = new THREE.PerspectiveCamera(45, view.width / view.height, 0.01, 2000);
+  camera.position.set(0, 1, 10);
+  camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+  const orbitControl: OrbitControls = new OrbitControls(camera, renderer.domElement);
+  orbitControl.minDistance = minDistanceCamera;
+  orbitControl.maxDistance = maxDistanceCamera;
+  orbitControl.target = new THREE.Vector3(0, 0, 0);
+  orbitControl.rotateSpeed = rotateSpeed;
+  orbitControl.enableDamping = true;
+  orbitControl.enablePan = false;
+  orbitControl.maxPolarAngle = Math.PI / 2.1;
+  orbitControl.minPolarAngle = Math.PI / 2.6;
+
+  const ambientLight = new THREE.AmbientLight(lightColor.ambient.light, 5);
+  scene.add(ambientLight);
+
+  // const hemiLight = new THREE.HemisphereLight(0x404040, 0x404040, 0.6);
+  // hemiLight.position.set(0, 10, 0);
+  // scene.add(hemiLight);
+
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+  directionalLight.position.set(5, 8, 0);
+  directionalLight.shadow.mapSize.width = 2048  // default
+  directionalLight.shadow.mapSize.height = 2048  // default
+  directionalLight.shadow.camera.near = 0.1  // default
+  directionalLight.shadow.camera.far = 2000  // default
+  directionalLight.shadow.bias = -0.00001;
+  directionalLight.castShadow = true;
+  scene.add(directionalLight);
+
+  const spotLight = new THREE.SpotLight(0xffffff, 5, 1000, 0.4, 1, 0.5);
+  spotLight.castShadow = true;
+  spotLight.shadow.mapSize.width = 2056;
+  spotLight.shadow.mapSize.height = 2056;
+  spotLight.shadow.camera.near = 0.1;
+  spotLight.shadow.camera.far = 2000;
+  spotLight.shadow.bias = -0.00005;
+  spotLight.visible = false;
+  scene.add(spotLight);
+  spotLight.target = targetModel;
+  scene.add(targetModel);
+
+  const update = (dt: number) => {
+    orbitControl.update();
+    renderer.render(scene, camera);
+  }
+
+  let previousTime = Date.now();
+
+  const animate = () => {
+    const currentTime = Date.now();
+    const dt = currentTime - previousTime;
+    TWEEN.update();
+    update(dt / 1000);
+    previousTime = currentTime;
+    requestAnimationFrame(animate);
+  }
+  animate();
+  view.view.appendChild(renderer.domElement);
+
+  window.addEventListener('resize', () => {
+    view.onResize(camera, renderer);
+  });
+
+  const changeIconLightMode = () => {
+    lightMode.style.backgroundColor = '#ffffff';
+    if (currentLightMode) {
+      if (currentLightMode === 'light') {
+        iconLightMode.src = 'assets/textures/dark.svg';
+      }
+      else if (currentLightMode === 'dark') {
+        iconLightMode.src = 'assets/textures/light.svg';
+      }
+    }
+  }
+
+  const changeLightMode = () => {
+    if (currentLightMode) {
+      TWEEN.removeAll();
+      let currentLightColor: {
+        direction: THREE.Color,
+        ambient: THREE.Color,
+        hemi: THREE.Color,
+        scene: THREE.Color
+      } = null;
+      let toLightColor: {
+        direction: THREE.Color,
+        ambient: THREE.Color,
+        hemi: THREE.Color,
+        scene: THREE.Color
+      } = null;
+      lightMode.style.display = 'none';
+      if (currentLightMode === 'light') {
+        currentLightColor = {
+          direction: lightColor.direction.dark.clone(),
+          ambient: lightColor.ambient.dark.clone(),
+          hemi: lightColor.hemi.dark.clone(),
+          scene: lightColor.scene.dark.clone(),
+        }
+        toLightColor = {
+          direction: lightColor.direction.light.clone(),
+          ambient: lightColor.ambient.light.clone(),
+          hemi: lightColor.hemi.light.clone(),
+          scene: lightColor.scene.light.clone()
+        }
+      }
+      else if (currentLightMode === 'dark') {
+        currentLightColor = {
+          direction: lightColor.direction.light.clone(),
+          ambient: lightColor.ambient.light.clone(),
+          hemi: lightColor.hemi.light.clone(),
+          scene: lightColor.scene.light.clone(),
+        }
+        toLightColor = {
+          direction: lightColor.direction.dark.clone(),
+          ambient: lightColor.ambient.dark.clone(),
+          hemi: lightColor.hemi.dark.clone(),
+          scene: lightColor.scene.dark.clone(),
+        }
+      }
+      new TWEEN.Tween(currentLightColor)
+        .to(toLightColor, 1000)
+        .onStart((object: {
+          direction: THREE.Color,
+          ambient: THREE.Color,
+          hemi: THREE.Color,
+          scene: THREE.Color
+        }) => {
+          directionalLight.castShadow = true;
+        })
+        .onUpdate((object: {
+          direction: THREE.Color,
+          ambient: THREE.Color,
+          hemi: THREE.Color,
+          scene: THREE.Color
+        }, elapsed: number) => {
+          directionalLight.color.set(object.direction);
+          ambientLight.color.set(object.ambient);
+          scene.background = object.scene;
+
+        })
+        .onComplete((object: {
+          direction: THREE.Color,
+          ambient: THREE.Color,
+          hemi: THREE.Color,
+          scene: THREE.Color
+        }) => {
+          lightMode.style.display = 'flex';
+          if (targetModel) {
+            spotLight.target = targetModel;
+            const p = targetModel.getWorldPosition(new THREE.Vector3());
+            spotLight.position.set(
+              p.x,
+              p.y + 2,
+              p.z
+            )
+            if (currentLightMode === 'light') {
+              spotLight.visible = false;
+            }
+            else {
+              spotLight.visible = true;
+            }
+          }
+
+        }).start();
+    }
+  }
+
+  lightMode.addEventListener('click', (ev: MouseEvent) => {
+    currentLightMode = currentLightMode === 'light' ? 'dark' : 'light';
+    changeIconLightMode();
+    changeLightMode();
+  })
+
+  logic(renderer, scene, camera, orbitControl, spotLight);
+}
+
+initView(
+  {
+    view: threejsElement,
+    width: threejsElement.clientWidth,
+    height: threejsElement.clientHeight,
+    onResize: (camera: THREE.PerspectiveCamera, renderer: THREE.WebGLRenderer) => {
+      camera.aspect = threejsElement.clientWidth / threejsElement.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(threejsElement.clientWidth, threejsElement.clientHeight);
+    }
+  }
+);
+
+lightMode.addEventListener('mouseover', () => {
+  hoverLightIcon();
+});
+
+lightMode.addEventListener('mouseout', () => {
+  normalLightIcon();
+})
+
+lightMode.addEventListener('touchstart', () => {
+  hoverLightIcon();
+});
+
+lightMode.addEventListener('touchend', () => {
+  normalLightIcon();
+})
+
+function hoverLightIcon() {
+  lightMode.style.backgroundColor = '#646cff';
+  const iconDirs = iconLightMode.src.split('/');
+  let iconName = iconDirs.pop();
+  if (iconName.toLocaleLowerCase().includes('dark')) {
+    iconLightMode.src = iconLight.hover.dark;
+  }
+  else {
+    iconLightMode.src = iconLight.hover.light;
+  }
+}
+
+function normalLightIcon() {
+  lightMode.style.backgroundColor = '#ffffff';
+  const iconDirs = iconLightMode.src.split('/');
+  let iconName = iconDirs.pop();
+  if (iconName.toLocaleLowerCase().includes('dark')) {
+    iconLightMode.src = iconLight.normal.dark;
+  }
+  else {
+    iconLightMode.src = iconLight.normal.light;
+  }
+}
+
+function logic(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.PerspectiveCamera,
+  orbitControl?: OrbitControls,
+  spotingLight?: THREE.SpotLight,
+) {
+  textureLoader.load('assets/textures/map_texture2.png', (texture) => {
+    fbxLoader.load('assets/models/model4.fbx', (data) => {
+      const map = data;
+      console.log(map);
+      map.traverse(child => {
+        if (child instanceof THREE.Mesh) {
+          child.receiveShadow = true;
+          child.castShadow = true;
+          child.material = new THREE.MeshPhongMaterial({
+            map: texture,
+            alphaMap: texture,
+            depthTest: true,
+            blending: THREE.NormalBlending,
+            specular: 0x000000,
+            side: THREE.DoubleSide
+          });
+        }
+        if (child instanceof THREE.Mesh && child.name.toLocaleLowerCase().includes('car')) {
+          targetModel = child;
+          const p = targetModel.getWorldPosition(new THREE.Vector3()).multiplyScalar(maxDistanceCamera);
+          camera.position.set(p.x, camera.position.y, p.y);
+          
+        }
+      })
+      modelToRotate = map;
+      const distance = minDistanceCamera + (maxDistanceCamera - minDistanceCamera) / 2;
+      if (camera.position.distanceTo(map.position) != distance) {
+        const zoomCamera = new TWEEN.Tween(camera.position)
+          .to(map.position, 1000).onUpdate((object: THREE.Vector3, value: number) => {
+            const position = camera.position.clone().lerp(object, 0.05);
+            camera.position.set(position.x, position.y, position.z);
+            if (camera.position.distanceTo(map.position) <= distance) {
+              zoomCamera.stop();
+            }
+          }).start();
+      }
+      scene.add(map)
+      if (orbitControl && targetModel) {
+        const targetModelWorldPosition = targetModel.getWorldPosition(new THREE.Vector3());
+        const objectDistance = new THREE.Vector2(targetModelWorldPosition.x, targetModelWorldPosition.z)
+          .distanceTo(new THREE.Vector2(0, 0));
+
+        orbitControl.addEventListener('change', (ev) => {
+          const camWorldPosition = orbitControl.object.getWorldPosition(new THREE.Vector3())
+          const camDistance = new THREE.Vector2(
+            camWorldPosition.x,
+            camWorldPosition.z
+          ).distanceTo(new THREE.Vector2(0, 0));
+          const nextPosition = new THREE.Vector3(
+            (camWorldPosition.x / camDistance) * objectDistance,
+            targetModel.position.y,
+            (camWorldPosition.z / camDistance) * objectDistance
+          )
+          targetModel.lookAt(0, targetModel.position.y, 0);
+          targetModel.rotateY(-Math.PI / 2);
+          targetModel.position.x = nextPosition.x;
+          targetModel.position.z = nextPosition.z;
+          spotingLight && (spotingLight.target = targetModel),
+            spotingLight.position.set(
+              targetModel.position.x,
+              targetModel.position.y + 2,
+              targetModel.position.z
+            )
+        })
+      }
+    })
+  })
+
+}
+
+function generate(parent: THREE.Object3D, model: THREE.Object3D | THREE.Object3D[]): {
   object?: THREE.Object3D,
   size?: THREE.Vector2
-} => {
+} {
   const perlinNoise = new Perlin();
   perlinNoise.resetOutputRange();
   const range = { min: 0, max: 1.25 };
@@ -163,279 +482,30 @@ const generate = (parent: THREE.Object3D, model: THREE.Object3D | THREE.Object3D
 
 }
 
-
-const logic = (
-  renderer: THREE.WebGLRenderer,
-  scene: THREE.Scene,
-  camera: THREE.PerspectiveCamera,
-  orbitControl?: OrbitControls,
-  spotingLight?: THREE.SpotLight,
-) => {
-  loadModels(tilePaths, (objects: THREE.Object3D[]) => {
-    listMapModels = objects;
-    const map = new THREE.Object3D();
-    modelToRotate = map;
-    const distance = minDistanceCamera + (maxDistanceCamera - minDistanceCamera) / 2;
-    if (camera.position.distanceTo(map.position) > distance) {
-      const zoomCamera = new TWEEN.Tween(camera.position)
-        .to(map.position, 1000).onUpdate((object: THREE.Vector3, value: number) => {
-          const position = camera.position.clone().lerp(object, 0.05);
-          camera.position.set(position.x, position.y, position.z);
-          if (camera.position.distanceTo(map.position) <= distance) {
-            zoomCamera.stop();
-          }
-        }).start();
+function loadModels(path: string[], onDone: (objects: THREE.Object3D[]) => void) {
+  const list: THREE.Object3D[] = []
+  const loadFunction = (count: number, onDoneLoad: () => void) => {
+    if (count >= path.length) {
+      onDoneLoad()
+      return
     }
-    scene.add(map)
-    const { size } = generate(map, listMapModels)
-
-    const sphereMaterial = new THREE.MeshStandardMaterial({
-      color: 0xFFFF00,
-      transparent: true,
-      opacity: 1,
-    })
-    const sphereGeometry = new THREE.SphereGeometry(0.2, 128, 128);
-    const sun = new THREE.Mesh(sphereGeometry, sphereMaterial);
-    sun.castShadow = true;
-    sun.receiveShadow = true;
-    targetModel.add(sun);
-    sun.position.set(0, 0.2, Math.max(size.x, size.y) / 3);
-    if (orbitControl) {
-      const sunWorldPosition = sun.getWorldPosition(new THREE.Vector3());
-      const objectDistance = new THREE.Vector2(sunWorldPosition.x, sunWorldPosition.z)
-        .distanceTo(new THREE.Vector2(0, 0));
-
-      orbitControl.addEventListener('change', (ev) => {
-        const camWorldPosition = orbitControl.object.getWorldPosition(new THREE.Vector3())
-        const camDistance = new THREE.Vector2(camWorldPosition.x, camWorldPosition.z)
-          .distanceTo(new THREE.Vector2(0, 0));
-        sun.position.x = (camWorldPosition.x / camDistance) * objectDistance;
-        sun.position.z = (camWorldPosition.z / camDistance) * objectDistance;
-        spotingLight && (spotingLight.target = targetModel.children[0]),
-        spotingLight.position.set(
-          targetModel.children[0].position.x,
-          targetModel.children[0].position.y + 2,
-          targetModel.children[0].position.z
-        )
+    gltfLoader.load(path[count], (gltf: GLTF) => {
+      gltf.scene.traverse(child => {
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+          child.material.roughness = 1;
+        }
       })
-    }
+      list.push(gltf.scene)
+      loadFunction(count + 1, onDoneLoad)
+    }, undefined, (err) => {
+      console.error(err);
+      loadFunction(count + 1, onDoneLoad)
+    })
+  }
 
+  loadFunction(0, () => {
+    onDone(list)
   })
-
 }
-
-const initView = (view: {
-  view: HTMLElement,
-  width: number,
-  height: number,
-  onResize: (
-    camera: THREE.PerspectiveCamera,
-    renderer: THREE.WebGLRenderer
-  ) => void
-}) => {
-
-  let currentLightMode: 'light' | 'dark' = 'light';
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(view.width, view.height);
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.toneMapping = THREE.CineonToneMapping;
-  renderer.toneMappingExposure = 1.6;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  THREE.ColorManagement.enabled = false;
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0, 0.8, 1);
-  const camera = new THREE.PerspectiveCamera(45, view.width / view.height, 0.01, 1000);
-  camera.position.set(0, 1, 10);
-  camera.lookAt(new THREE.Vector3(0, 0, 0));
-
-  const orbitControl: OrbitControls = new OrbitControls(camera, renderer.domElement);
-  orbitControl.minDistance = minDistanceCamera;
-  orbitControl.maxDistance = maxDistanceCamera;
-  orbitControl.target = new THREE.Vector3(0, 0, 0);
-  orbitControl.rotateSpeed = rotateSpeed;
-  orbitControl.enableDamping = true;
-  orbitControl.enablePan = false;
-  orbitControl.maxPolarAngle = Math.PI / 2.5;
-  orbitControl.minPolarAngle = Math.PI / 4;
-
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1);
-  scene.add(ambientLight);
-
-  // const hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.6);
-  // hemiLight.position.set(0, 10, 0);
-  // // hemiLight.shadow.bias = -0.0001;
-  // scene.add(hemiLight);
-
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-  directionalLight.position.set(0, 1, 0);
-  directionalLight.shadow.mapSize.width = 2048  // default
-  directionalLight.shadow.mapSize.height = 2048  // default
-  directionalLight.shadow.camera.near = 0.1  // default
-  directionalLight.shadow.camera.far = 2000  // default
-  directionalLight.shadow.bias = -0.000002;
-  directionalLight.castShadow = true;
-  scene.add(directionalLight);
-
-  const spotLight = new THREE.SpotLight(0xffffff, 5, 1000, 0.2, 1, 0.5);
-  spotLight.castShadow = true;
-  spotLight.shadow.mapSize.width = 2056;
-  spotLight.shadow.mapSize.height = 2056;
-  spotLight.shadow.camera.near = 0.1;
-  spotLight.shadow.camera.far = 2000;
-  spotLight.shadow.bias = -0.00005;
-  spotLight.visible = false;
-  scene.add(spotLight);
-  spotLight.target = targetModel;
-  scene.add(targetModel);
-
-  const update = (dt: number) => {
-    orbitControl.update();
-    renderer.render(scene, camera);
-  }
-
-  let previousTime = Date.now();
-
-  const animate = () => {
-    const currentTime = Date.now();
-    const dt = currentTime - previousTime;
-    TWEEN.update();
-    update(dt / 1000);
-    previousTime = currentTime;
-    requestAnimationFrame(animate);
-  }
-  animate();
-  view.view.appendChild(renderer.domElement);
-
-  window.addEventListener('resize', () => {
-    view.onResize(camera, renderer);
-  });
-
-  // const touchData: {
-  //   isTouch: boolean,
-  //   previousPosition: THREE.Vector2,
-  //   dir: "left" | "right" | "none",
-  //   lastVelocity: THREE.Vector2,
-  //   isTweenPlaying: boolean,
-  // } = {
-  //   isTouch: false,
-  //   previousPosition: null,
-  //   dir: "none",
-  //   lastVelocity: new THREE.Vector2(),
-  //   isTweenPlaying: false,
-  // }
-
-
-  // const touchstart = (position: THREE.Vector2) => {
-  //   TWEEN.removeAll()
-  //   touchData.isTweenPlaying = false;
-  //   touchData.isTouch = true;
-  //   touchData.previousPosition = position;
-  // }
-  // const touchmove = (position: THREE.Vector2) => {
-  //   if (touchData.isTouch && !touchData.isTweenPlaying) {
-  //     const dPosition = touchData.previousPosition.clone()
-  //       .lerp(position.clone(), 0.05)
-  //       .sub(touchData.previousPosition.clone());
-  //     touchData.lastVelocity = dPosition;
-  //     if (dPosition.x < 0) touchData.dir = "left";
-  //     else if (dPosition.x > 0) touchData.dir = "right";
-  //     else touchData.dir = "none";
-  //     modelToRotate && (modelToRotate.rotation.y += dPosition.x * rotateSpeed * deltaTime);
-  //     scene.rotation.x += dPosition.y * rotateSpeed * deltaTime
-
-  //     touchData.previousPosition.set(position.x, position.y);
-  //     // camera.rotation.x += dy * 0.001;
-  //   }
-  // }
-  // const touchend = (position: THREE.Vector2) => {
-  //   if (touchData.isTouch) {
-  //     touchData.isTouch = false;
-  //     touchData.isTweenPlaying = true;
-  //     // TWEEN.remove(rotationTween)
-  //     TWEEN.removeAll()
-  //     // if (touchData.dir === 'left') {
-  //     //   addAngle = -Math.PI / 6;
-  //     // }
-  //     // else if (touchData.dir === 'right') {
-  //     //   addAngle = Math.PI / 6;
-  //     // }
-  //     new TWEEN.Tween(touchData.lastVelocity).to(new THREE.Vector2(0, 0), 2000)
-  //       .onUpdate((object: THREE.Vector2, elapsed: number) => {
-  //         // console.log(currentRotation);
-  //         modelToRotate && (modelToRotate.rotation.y += object.x * rotateSpeed * deltaTime);
-  //       })
-  //       .onComplete((object: THREE.Vector2) => {
-  //         touchData.previousPosition = null;
-  //         touchData.dir = "none";
-  //         touchData.lastVelocity = new THREE.Vector2();
-  //         touchData.isTweenPlaying = false;
-  //       })
-  //       .start();
-
-  //   }
-  // }
-  const changeIconLightMode = () => {
-    if (currentLightMode) {
-      if (currentLightMode === 'light') {
-        iconLightMode.src = 'assets/textures/dark.svg';
-      }
-      else if (currentLightMode === 'dark') {
-        iconLightMode.src = 'assets/textures/light.svg';
-      }
-    }
-  }
-
-  const changeLightMode = () => {
-    if (currentLightMode) {
-      if (currentLightMode === 'light') {
-        directionalLight.color.set(lightColor.direction.light);
-        directionalLight.castShadow = true;
-        ambientLight.color.set(lightColor.ambient.light);
-        // hemiLight.color.set(lightColor.hemi.light);
-        // hemiLight.groundColor.set(lightColor.hemi.light);
-        scene.background = lightColor.scene.light;
-        spotLight.visible = false;
-      }
-      else if (currentLightMode === 'dark') {
-        directionalLight.color.set(lightColor.direction.dark);
-        directionalLight.castShadow = false;
-        ambientLight.color.set(lightColor.ambient.dark);
-        // hemiLight.color.set(lightColor.hemi.dark);
-        // hemiLight.groundColor.set(lightColor.hemi.dark);
-        scene.background = lightColor.scene.dark;
-        spotLight.visible = true;
-        spotLight.target = targetModel.children[0];
-        spotLight.position.set(
-          targetModel.children[0].position.x,
-          targetModel.children[0].position.y + 2,
-          targetModel.children[0].position.z
-        )
-      }
-    }
-  }
-
-  lightMode.addEventListener('click', (ev: MouseEvent) => {
-    currentLightMode = currentLightMode === 'light' ? 'dark' : 'light';
-    changeIconLightMode();
-    changeLightMode();
-  })
-
-  logic(renderer, scene, camera, orbitControl, spotLight);
-}
-
-initView(
-  {
-    view: threejsElement,
-    width: threejsElement.clientWidth,
-    height: threejsElement.clientHeight,
-    onResize: (camera: THREE.PerspectiveCamera, renderer: THREE.WebGLRenderer) => {
-      camera.aspect = threejsElement.clientWidth / threejsElement.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(threejsElement.clientWidth, threejsElement.clientHeight);
-    }
-  }
-);
-
